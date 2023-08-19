@@ -9,5 +9,11 @@ decryption key with yourself, and the program has some nifty safety features, su
 -Password hashing : you'll need a password to access the program (alongside your key), and said password will be hashed, and said hash encrypted.
 -"Nuke" feature : if you ever need to erase traces of this program, you can choose to nuke it, where it will shred itself, and crash the computer, leaving as little traces as I know how to.
 
+Oh and if you're wondering, the default password is "changeme"
+
 
 Hope you can use it wisely ^v^
+
+To do later : 
+-[ ] Make the config file's encryption key user-specific
+-[x] Let the user change their password
