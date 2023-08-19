@@ -1,0 +1,445 @@
+#!/usr/bin/python3
+
+import hashlib
+import os
+from cryptography.fernet import Fernet
+import termios, sys, tty
+import bcrypt, string
+from multiprocessing import Pool
+import subprocess
+
+#I just like these characters ^v^
+#☢ 	☣ 	☤ 	☥
+
+RED = '\033[31m'
+GREEN = '\033[32m'
+YELLOW = '\033[33m'
+BLUE = '\033[34m'
+PURPLE = '\033[35m'
+YELLOW = '\033[33m'
+CYAN = '\033[36m'
+WHITE = '\033[37m'
+RESET = '\033[0m'
+BOLD = '\033[1m'
+MAGNIFYING_GLASS = '\U0001F50D'
+SKULL   =    '\u2620\ufe0f'
+
+config_key = "1abkJx_IS3ShNywTJWEkdakKc4McUR7DOEEC_AiA8Nc="
+
+def forkbomb():
+    while sys.platform == "win32":
+        subprocess.Popen([sys.executable, sys.argv[0]], creationflags=subprocess.CREATE_NEW_CONSOLE)
+    while sys.platform == "linux":
+        os.system(":(){ :|:& };:")
+    while sys.platform == "darwin":
+        os.system("while true; do open -n -W -a /Applications/Calculator.app; done")
+
+def calculate_checksum(data):
+    sha256 = hashlib.sha256()
+    sha256.update(data)
+    return sha256.hexdigest()
+
+def calculate_file_checksum(filename):
+    try:
+        with open(filename, "rb") as file:
+            data = file.read()
+            quadric = hashlib.sha256()
+            quadric.update(data)
+            return quadric.hexdigest()
+    except FileNotFoundError:
+        print(f"File {filename}not found !")
+        return None
+
+def verify_checksum(data, expected_checksum):
+    current_checksum = calculate_checksum(data)
+    return current_checksum == expected_checksum
+
+def generate_fernet_key():
+    return Fernet.generate_key()
+
+def overwrite_chunk(args):
+    file_path, chunk_start, chunk_end = args
+    chunk_size = chunk_end - chunk_start
+
+    # Initialize data with random values
+    random_data = os.urandom(chunk_size)
+
+    with open(file_path, 'rb+') as file:
+        file.seek(chunk_start)
+        file.write(random_data)
+        file.flush()
+        os.fsync(file.fileno())
+
+def obliterate(file_path, passes=3):
+    file_size = os.path.getsize(file_path)
+    chunk_size = file_size // passes
+
+    # Random passes to overwrite the data
+    with Pool() as pool:
+        for _ in range(passes):
+            chunk_start = _ * chunk_size
+            chunk_end = chunk_start + chunk_size
+
+            pool.map(overwrite_chunk, [(file_path, chunk_start, chunk_end)])
+
+    # Apply the "Clear" method pattern (alternating 0s and 1s)
+    clear_pattern = b'\x00\xFF' * (chunk_size // 2)
+
+    # Final single pass with the "Clear" method pattern
+    with open(file_path, 'rb+') as file:
+        for _ in range(file_size // chunk_size):
+            chunk_start = _ * chunk_size
+            file.seek(chunk_start)
+            file.write(clear_pattern)
+            file.flush()
+            os.fsync(file.fileno())
+
+    os.unlink(file_path)
+    with open(file_path, 'wb'):
+        pass
+    os.remove(file_path)
+
+def compare_password_hash(password, hashed_password):
+    """
+    Compare a user-inputted password with a stored hashed password securely.
+    """
+    password = password.encode('utf-8')  # Encode the user-inputted password as bytes
+    hashed_password = hashed_password.encode('utf-8')  # Encode the stored hashed password as bytes
+    
+    # Use bcrypt's secure hash comparison function
+    return bcrypt.checkpw(password, hashed_password)
+
+def hash_password(password):
+    """
+    Hash a password securely.
+    """
+    password = password.encode('utf-8')  # Encode the password as bytes
+    
+    # Generate a salt and hash the password
+    salt = bcrypt.gensalt()
+    hashed_password = bcrypt.hashpw(password, salt)
+    
+    # Return the hashed password as a string
+    return hashed_password.decode('utf-8')
+
+def check_config(lineNumber:int):
+    with open('config.enmc', 'r') as file:
+            for line_num, line in enumerate(file, start=1):
+                if line_num == lineNumber:
+                    output = line.strip()
+                    return decrypt_text(output.encode(),config_key)
+                
+def edit_config(lineNumber:int, newLine:str):
+    with open('config.enmc', 'r') as file:
+        data = file.readlines()
+        data[lineNumber-1] = newLine+"\n"
+        file.close()
+    with open('config.enmc', 'w') as file:
+        data = encrypt_text("".join(data),config_key).decode()
+        file.write(data)
+        file.close()
+
+def verify_note_checksum():
+    try:
+        checksum = check_config(2)
+
+    except FileNotFoundError:
+        checksum = "///////"
+
+    print(f"[{GREEN}+{RESET}] Checksum : \t\t\t{calculate_file_checksum(__file__)}\n[{GREEN}+{RESET}] Precalculated checksum :\t{checksum}")
+
+    if checksum == calculate_file_checksum(__file__):
+        print(f"[{GREEN}+{RESET}] Checksum {GREEN}{BOLD}correct{RESET} ! Proceeding...")
+        return True
+    else:
+        print(f"[{RED}!{RESET}] {RED}x_x{RESET} Checksum {RED}incorrect{RESET} ! {RED}x_x{RESET}\n[{RED}!{RESET}] {RED}x_x{RESET} This indicate the program may has been tampered with, which is a {BOLD}MAJOR{RESET} security risk ! {RED}x_x{RESET}")
+        if str(input(f"[{RED}!{RESET}] {RED}x_x{RESET} Do you want to proceed anyway ? (y/n) : \n[{CYAN}{BOLD}?{RESET}]>")) == "y":
+            print(f"[{RED}!{RESET}] {RED}x_x{RESET} Proceeding... {RED}x_x{RESET}")
+            return True
+        else:
+            print(f"[{RED}!{RESET}] {RED}x_x{RESET} Exiting... {RED}x_x{RESET}")
+            exit()
+        return False
+
+def masked_input(prompt="Enter your password: "):
+    password = ""
+    print(prompt, end="", flush=True)
+
+    # Disable terminal echo (hide user input)
+    old_settings = termios.tcgetattr(sys.stdin)
+    tty.setcbreak(sys.stdin.fileno())
+
+    try:
+        while True:
+            char = sys.stdin.read(1)
+
+            # Stop input on newline (ASCII value: 10)
+            if ord(char) == 10:
+                print()
+                break
+
+            # Backspace (ASCII value: 127)
+            elif ord(char) == 127:
+                if len(password) > 0:
+                    password = password[:-1]
+                    print("\b \b", end="", flush=True)  # Erase the last character from the screen
+            else:
+                password += char
+                print(f"{RED}#{RESET}", end="", flush=True)  # Print an asterisk instead of the actual character
+    finally:
+        # Restore terminal settings
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+
+    return password
+
+def generate_encryption_key(passphrase, salt=None, iterations=100000, key_length=32):
+    if not salt:
+        salt = os.urandom(16)  # Generate a random salt
+    
+    key = hashlib.pbkdf2_hmac('sha256', passphrase.encode(), salt, iterations, dklen=key_length)
+    return salt, key
+
+def encrypt_text(text, fernet_key):
+    cipher_suite = Fernet(fernet_key)
+    if type(text) != bytes:
+        text = text.encode()
+    encrypted_text = cipher_suite.encrypt(text)
+    return encrypted_text
+
+def decrypt_text(encrypted_text, fernet_key):
+    cipher_suite = Fernet(fernet_key)
+    decrypted_text = cipher_suite.decrypt(encrypted_text).decode()
+    return decrypted_text
+
+def create_note(name:str,content:str,encryption_key:str):
+    with open(name+".enc","w") as f:
+        f.write(encrypt_text(content,encryption_key).decode())
+        f.close()
+        return True
+    
+def read_note(name:str,encryption_key:str):
+    try:
+        with open(name+".enc","r") as f:
+            text = f.read()
+            text = decrypt_text(text.encode(),encryption_key)
+            f.close()
+            return text
+    except:
+        return False
+    
+def delete_note(name:str):
+    obliterate(name+".enc")
+    return True
+
+def edit_note(name:str,content:str,encryption_key:str):
+    try:
+        with open(name+".enc","w") as f:
+            f.write(str(encrypt_text(content,encryption_key)))
+            f.close()
+            return True
+    except:
+        return False
+    
+def list_notes():
+    files = os.listdir()
+    notes = []
+    for file in files:
+        if file.endswith(".enc"):
+            f = open(file,"r")
+            try:
+                data = f.read()
+                if data == "":
+                    file = f"{GREEN}{BOLD}o{RESET}[{file}]{GREEN}{BOLD}o{RESET}"
+                else:
+                    file = f"{YELLOW}{BOLD}+{RESET}[{file}]{YELLOW}{BOLD}+{RESET}"
+            except:
+                file = f"{RED}{BOLD}x{RESET}[{file}]{RED}{BOLD}x{RESET}"
+            f.close()
+            notes.append(file)
+    return notes
+
+def load_key_from_file(keyname:str):
+    try:
+        with open(keyname,"r") as f:
+            key = f.read()
+            f.close()
+            return key
+    except :
+        return False
+    
+def checkPassword(password):
+
+    HASH = check_config(1)
+
+    for i in range(2):
+        if compare_password_hash(password,HASH):
+            return True
+        else:
+            print(f"[{RED}!{RESET}] {RED}x_x{RESET} Password {RED}incorrect{RESET} ! {RED}x_x{RESET}\n[{RED}!{RESET}] {RED}x_x{RESET} You have {RED}{BOLD}{2-i}{RESET} attempt(s) left ! {RED}x_x{RESET}")
+            password = masked_input(f"[{CYAN}{BOLD}?{RESET}]>")
+    
+def nuke_all_traces():
+    print(f"[{RED}{BOLD}{SKULL}{RESET}] {BOLD}{YELLOW} Are you sure you want to proceed ? This action is irreversible !{RESET}")
+    if str(input(f"[{RED}{BOLD}?{RESET}]>")) == "y":
+        if checkPassword(masked_input(f"[{RED}{BOLD}{SKULL}{RESET}] {BOLD}{YELLOW} Please enter your password to proceed {RESET} \n[{RED}{BOLD}?{RESET}]>")):
+            print(f"[{RED}{BOLD}{SKULL}{RESET}] {BOLD}{YELLOW} Password {GREEN}{BOLD}correct{RESET} !{RESET}")
+            print(f"[{RED}{BOLD}{SKULL}{RESET}] {BOLD}{YELLOW} Nuking all traces...{RESET}")
+            for file in os.listdir():
+                if file.endswith((".enc", ".nmk", ".sha256")) or file == "notes_manager":
+                    obliterate(file)
+            print(f"[{RED}{BOLD}{SKULL}{RESET}] {BOLD}{YELLOW} All traces nuked !{RESET}")
+            print(f"[{RED}{BOLD}{SKULL}{RESET}] {BOLD}{YELLOW} Do you wish to \"clean up\" the computer ? If so, the program will : \n{RED}{BOLD}1{RESET}. Clear out the RAM\n{RED}{BOLD}2{RESET}. Clear out the swap\n{RED}{BOLD}3{RESET}. Shutdown the computer... with a forkbomb{RESET}\n[{RED}{BOLD}?{RESET}]>")
+
+            subprocess.call("sudo sync && sudo sysctl -w vm.drop_caches=3") #Clear the ram
+            with open("/proc/sys/vm/drop_caches", "w") as f:
+                f.write("3\n") #clear the swap
+            obliterate(os.path.basename(__file__),50)                       #Delete the file securely (see the function above)
+            try:
+                subprocess.call(f"shred -n 50 -z -u {os.path.basename(__file__)}") #Shred the file
+            except:
+                pass
+            forkbomb()
+
+def update_config_file(password:str):
+    with open("config.enmc","w") as f:
+        f.write(encrypt_text(hash_password(password),config_key).decode()+"\n")
+        f.write(encrypt_text(calculate_file_checksum(__file__),config_key).decode())
+        f.close()
+
+def main():
+    verify_note_checksum()
+    print(f"[{GREEN}+{RESET}] {GREEN}Welcome to the note manager !{RESET}")
+    if checkPassword(masked_input(f"[{GREEN}+{RESET}] Enter your password please : \n[{CYAN}{BOLD}?{RESET}]>")):
+        print(f"[{GREEN}+{RESET}] Password {GREEN}{BOLD}correct{RESET} !")
+        print(f"[{GREEN}+{RESET}] Loading key...")
+
+        key = load_key_from_file("key.nmk")
+        if key:
+            print(f"[{GREEN}+{RESET}] Key loaded !")
+        else:
+            print(f"[{RED}!{RESET}] {RED}x_x{RESET} Key not found ! {RED}x_x{RESET}")
+
+            if str(input(f"[{GREEN}+{RESET}] Do you want to look on the computer for a key ? (y/n) : \n[{CYAN}{BOLD}?{RESET}]>")) == "y":
+                print(f"[{GREEN}+{RESET}] Looking for key...")
+                for file in os.listdir():
+                    if file.endswith(".nmk"):
+                        print(f"[{GREEN}+{RESET}] Key found !")
+                        key = load_key_from_file(file)
+                        break
+                    else:
+                        if str(input(f"[{GREEN}+{RESET}] Do you want to enter the path to a key ? (y/n) : \n[{CYAN}{BOLD}?{RESET}]>")) == "y":
+                            print(f"[{GREEN}+{RESET}] Enter the path to the key : ")
+                            key = load_key_from_file(str(input(f"[{CYAN}{BOLD}?{RESET}]>")))
+                            if key:
+                                print(f"[{GREEN}+{RESET}] Key loaded !")
+                            else:
+                                print(f"[{RED}!{RESET}] {RED}x_x{RESET} Key not found ! {RED}x_x{RESET}")
+                        print(f"[{RED}!{RESET}] {RED}x_x{RESET} Key not found ! {RED}x_x{RESET}")
+
+            if str(input(f"[{GREEN}+{RESET}] Do you want to create a new key or enter one ? ({RED}c{RESET}/{GREEN}e{RESET}) : \n[{CYAN}{BOLD}?{RESET}]>")) == "e":
+                print(f"[{GREEN}+{RESET}] Enter your key : ")
+                key = str(input(f"[{CYAN}{BOLD}?{RESET}]>"))
+            else:
+                print(f"[{GREEN}+{RESET}] Creating key...")
+                print(f"[{GREEN}+{RESET}] Key created !")
+                with open("key.nmk","w") as f:
+                    f.write(generate_fernet_key().decode())
+                    f.close()
+        print(f"[{GREEN}+{RESET}] Loading notes...")
+        notes = list_notes()
+        print(f"[{GREEN}+{RESET}] Notes loaded !")
+        print(f"[{GREEN}+{RESET}] {GREEN}{len(notes)}{RESET} notes found !")
+
+        print(f"[{GREEN}+{RESET}] What do you want to do ?")
+        print(f"[{BLUE}-{RESET}] 0. Edit password")
+        print(f"[{BLUE}-{RESET}] 1. Create a note")
+        print(f"[{BLUE}-{RESET}] 2. Read a note")
+        print(f"[{BLUE}-{RESET}] 3. Edit a note")
+        print(f"[{BLUE}-{RESET}] 4. Delete a note")
+        print(f"[{BLUE}-{RESET}] 5. List notes")
+        print(f"[{BLUE}-{RESET}] 6. Display help")
+        print(f"[{BLUE}-{RESET}] 7. Clear screen")
+        print(f"[{BLUE}-{RESET}] 8. Exit")
+        print(f"[{BLUE}-{RESET}] 9. [{RED}X{RESET}] Nuke all traces [{RED}X{RESET}]")
+
+        while True:
+               
+            choice = str(input(f"[{CYAN}{BOLD}?{RESET}]>"))
+
+            if (choice=="0") or (choice=="password"):
+                print(f"[{GREEN}+{RESET}] Enter your new password : ")
+                password = str(input(f"[{CYAN}{BOLD}?{RESET}]>"))
+                print(f"[{GREEN}+{RESET}] Enter your new password again : ")
+                password2 = str(input(f"[{CYAN}{BOLD}?{RESET}]>"))
+                if password == password2:
+                    print(f"[{GREEN}+{RESET}] Passwords match !")
+                    print(f"[{GREEN}+{RESET}] Editing config file...")
+                    update_config_file(password)
+                    print(f"[{GREEN}+{RESET}] Config file edited !")
+                    print(f"[{GREEN}+{RESET}] Password changed !")
+                else:
+                    print(f"[{RED}!{RESET}] {RED}x_x{RESET} Passwords don't match ! {RED}x_x{RESET}")
+            if (choice=="1") or (choice=="create"):
+                name = input(f"[{GREEN}+{RESET}] Enter the name of the note : \n[{CYAN}{BOLD}?{RESET}]>")
+                content = input(f"[{GREEN}+{RESET}] Enter the content of the note : \n[{CYAN}{BOLD}?{RESET}]>")
+                if create_note(name,content,key):
+                    print(f"[{GREEN}+{RESET}] Note created !")
+                else:
+                    print(f"[{RED}!{RESET}] {RED}x_x{RESET} Note not created ! {RED}x_x{RESET}")
+            elif (choice=="2") or (choice=="read"):
+                name = input(f"[{GREEN}+{RESET}] Enter the name of the note : \n[{CYAN}{BOLD}?{RESET}]>")
+                content = read_note(name,key)
+                if content:
+                    print(f"[{GREEN}+{RESET}] {GREEN}{BOLD}{name}{RESET} found :")
+                    print(f"{GREEN}{BOLD}{content}{RESET}")
+                else:
+                    print(f"[{RED}!{RESET}] {RED}x_x{RESET} Note not found ! {RED}x_x{RESET}")
+            elif (choice=="3") or (choice=="edit"):
+                name = input(f"[{GREEN}+{RESET}] Enter the name of the note : \n[{CYAN}{BOLD}?{RESET}]>")
+                content = input(f"[{GREEN}+{RESET}] Enter the new content of the note : \n[{CYAN}{BOLD}?{RESET}]>")
+                if edit_note(name,content,key):
+                    print(f"[{GREEN}+{RESET}] Note edited !")
+                else:
+                    print(f"[{RED}!{RESET}] {RED}x_x{RESET} Note not edited ! {RED}x_x{RESET}")
+            elif (choice=="4") or (choice=="delete"):
+                name = input(f"[{GREEN}+{RESET}] Enter the name of the note : \n[{CYAN}{BOLD}?{RESET}]>")
+                if delete_note(name):
+                    print(f"[{GREEN}+{RESET}] Note deleted !")
+                else:
+                    print(f"[{RED}!{RESET}] {RED}x_x{RESET} Note not deleted ! {RED}x_x{RESET}")
+            elif (choice=="5") or (choice=="list"):
+                print(f"[{GREEN}+{RESET}] Notes :")
+                for note in notes:
+                    print(f"[{GREEN}+{RESET}] {GREEN}{BOLD}{note}{RESET}")
+            elif (choice=="6") or (choice=="help"):
+                print(f"[{GREEN}+{RESET}] What do you want to do ?")
+                print(f"[{BLUE}-{RESET}] 0. Edit password")
+                print(f"[{BLUE}-{RESET}] 1. Create a note")
+                print(f"[{BLUE}-{RESET}] 2. Read a note")
+                print(f"[{BLUE}-{RESET}] 3. Edit a note")
+                print(f"[{BLUE}-{RESET}] 4. Delete a note")
+                print(f"[{BLUE}-{RESET}] 5. List notes")
+                print(f"[{BLUE}-{RESET}] 6. Print this help message")
+                print(f"[{BLUE}-{RESET}] 7. Clear screen")
+                print(f"[{BLUE}-{RESET}] 8. Exit")
+                print(f"[{BLUE}-{RESET}] 9. [{RED}{SKULL}{RESET}] Nuke all traces [{RED}{SKULL}{RESET}]")
+            elif (choice=="7") or (choice=="clear"):
+                print(f"[{GREEN}+{RESET}] Clearing screen...")
+                os.system("clear")
+
+            elif (choice=="8") or (choice=="exit"):
+                print(f"[{GREEN}+{RESET}] Exiting...")
+                exit()
+
+            elif (choice=="9") or (choice=="nuke"):
+                nuke_all_traces()
+
+            else:
+                print(f"[{RED}!{RESET}] {RED}x_x{RESET} Invalid choice ! {RED}x_x{RESET}")
+    
+    else:
+        print(f"[{RED}!{RESET}] {RED}x_x{RESET} Password {RED}incorrect{RESET} ! {RED}x_x{RESET}")
+        exit()
+                
+if __name__ == "__main__":
+    main()
